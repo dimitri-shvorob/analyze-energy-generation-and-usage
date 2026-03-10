@@ -1,4 +1,5 @@
 import copy
+import datetime
 from pathlib import Path
 
 import polars as pl
@@ -11,14 +12,15 @@ df = pl.read_parquet(PATH / "data combined - quantities and tariffs.parquet")
 
 BATTERY_TOPUP_COST_PER_KWH = 0.07
 
+DATES_BAD_OCTOPUS_DATA = [datetime.date(2025, 3, 30)]
+
 rr = []
 for b in [Battery(0, 0), Battery(5, 0)]:
-    for x in df.partition_by(by="date", maintain_order=True, as_dict=True).values():
+    for x in df.sort("date", "start_time").partition_by(by="date", maintain_order=True, as_dict=True).values():
         date = x["date"][0]
-        is_generation_data_available = x["is_generation_data_available"][0]
-        if is_generation_data_available == 0:
-            print(f"No generation data available for {date}")
-        else:
+        print(date)
+        is_hypo_calc_feasible = x["is_generation_data_available"][0] == 1 & (date not in DATES_BAD_OCTOPUS_DATA)
+        if is_hypo_calc_feasible:
             battery_starting_charge = b.charge
             battery_topup = b.capacity - b.charge
             _ = b.transform_net_supply(battery_topup)
@@ -30,8 +32,7 @@ for b in [Battery(0, 0), Battery(5, 0)]:
             row["value_gbp_electric_export"] = None if row["electric_export"] is None else (row["electric_export"] * row["electric_export_credit_per_kwh"])
             row["value_gbp_electric_import_less_export"] = None if row["value_gbp_electric_import"] is None or row["value_gbp_electric_export"] is None else (row["value_gbp_electric_import"] - row["value_gbp_electric_export"])
             # hypothetical calcs - battery
-            if is_generation_data_available == 1:
-                # morning top-up at a cheap rate
+            if is_hypo_calc_feasible:
                 if row["start_time"].hour == 0 and row["start_time"].minute == 0:
                     row["hypo_electric_import_battery_topup"] = battery_topup
                     row["hypo_value_gbp_electric_import"] = battery_topup * BATTERY_TOPUP_COST_PER_KWH
